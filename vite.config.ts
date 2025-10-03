@@ -3,18 +3,18 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
-// config async لأننا نستخدم await import
 export default defineConfig(async () => ({
-  // مهم لـ GitHub Pages (استبدل sirafaa باسم المستودع)
-  base: "/sirafa/", 
- build: { outDir: "dist/public", emptyOutDir: true },
+  // اسم الريبو على GitHub Pages
+  base: "/sirafa/",
+
+  // مشروع الفرونت داخل client
+  root: path.resolve(import.meta.dirname, "client"),
+
   plugins: [
     react(),
     runtimeErrorOverlay(),
     ...(process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined
-      ? [
-          (await import("@replit/vite-plugin-cartographer")).cartographer(),
-        ]
+      ? [(await import("@replit/vite-plugin-cartographer")).cartographer()]
       : []),
   ],
 
@@ -26,12 +26,9 @@ export default defineConfig(async () => ({
     },
   },
 
-  // مشروعك الفرونت داخل client
-  root: path.resolve(import.meta.dirname, "client"),
-
-  // خلّها dist حتى تطابق سكربت النشر gh-pages -d dist
+  // نُخرِج البناء في dist/public (خارج client)
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist"),
+    outDir: path.resolve(import.meta.dirname, "dist", "public"),
     emptyOutDir: true,
   },
 }));
