@@ -6,7 +6,7 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 export default defineConfig(async () => ({
   // اسم الريبو على GitHub Pages
   base: "/sirafa/",
-
+  build: { outDir: "dist/public", emptyOutDir: true }
   // مشروع الفرونت داخل client
   root: path.resolve(import.meta.dirname, "client"),
 
