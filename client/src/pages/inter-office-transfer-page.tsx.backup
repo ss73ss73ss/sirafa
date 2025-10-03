@@ -1,0 +1,902 @@
+import { useState, useEffect } from "react";
+import { useAuth } from "@/hooks/use-auth";
+import { useLocation } from "wouter";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Loader2, ArrowRight, Building2, DollarSign, Copy, CheckCircle, History, Download, Percent, TrendingDown, Users, Save } from "lucide-react";
+
+interface OfficeUser {
+  id: number;
+  fullName: string;
+  accountNumber: string;
+  city: string;
+  type: string;
+}
+
+interface Transfer {
+  id: number;
+  receiverName: string;
+  amount: string;
+  currency: string;
+  commission: string;
+  city: string;
+  status: string;
+  createdAt: string;
+}
+
+const transferSchema = z.object({
+  destinationCountry: z.string().min(1, "يرجى اختيار دولة الوجهة"),
+  receiverOfficeId: z.string().min(1, "يرجى اختيار المكتب المستلم"),
+  amount: z.string().min(1, "يرجى إدخال المبلغ").refine(
+    (val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0,
+    "يجب أن يكون المبلغ رقماً موجباً"
+  ),
+  currency: z.string().min(1, "يرجى اختيار العملة"),
+  senderName: z.string().min(2, "يجب أن يكون اسم المرسل أكثر من حرفين"),
+  senderPhone: z.string().min(8, "يجب أن يكون رقم الهاتف صحيحاً"),
+  receiverName: z.string().min(2, "يجب أن يكون اسم المستلم أكثر من حرفين"),
+  receiverPhone: z.string().min(8, "يجب أن يكون رقم الهاتف صحيحاً"),
+  notes: z.string().optional(),
+});
+
+const receiveSchema = z.object({
+  transferCode: z.string().min(6, "رمز التحويل يجب أن يكون 6 أرقام"),
+  receiverCode: z.string().min(6, "رمز المستلم يجب أن يكون 6 أرقام"),
+});
+
+type TransferFormValues = z.infer<typeof transferSchema>;
+type ReceiveFormValues = z.infer<typeof receiveSchema>;
+
+interface AgentCommission {
+  id: number;
+  agentId: number;
+  agentName: string;
+  commission: string;
+  isPercentage: boolean;
+  currency: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface CommissionData {
+  myCommission: AgentCommission | null;
+  otherCommissions: AgentCommission[];
+}
+
+export default function InterOfficeTransferPage() {
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const [balances, setBalances] = useState<Record<string, string>>({});
+  const [selectedCountry, setSelectedCountry] = useState("");
+  const [availableOffices, setAvailableOffices] = useState<any[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState("send");
+  const [transfersList, setTransfersList] = useState<any[]>([]);
+
+  // التحقق من نوع المستخدم
+  useEffect(() => {
+    if (user && user.type !== 'agent' && user.type !== 'admin') {
+      toast({
+        title: "غير مصرح",
+        description: "هذه الصفحة متاحة للمكاتب فقط",
+        variant: "destructive",
+      });
+      setLocation('/dashboard');
+    }
+  }, [user, setLocation, toast]);
+
+  // نموذج الإرسال
+  const form = useForm<TransferFormValues>({
+    resolver: zodResolver(transferSchema),
+    defaultValues: {
+      destinationCountry: "",
+      receiverOfficeId: "",
+      amount: "",
+      currency: "LYD",
+      senderName: "",
+      senderPhone: "",
+      receiverName: "",
+      receiverPhone: "",
+      notes: "",
+    },
+  });
+
+  // نموذج الاستلام
+  const receiveForm = useForm<ReceiveFormValues>({
+    resolver: zodResolver(receiveSchema),
+    defaultValues: {
+      transferCode: "",
+      receiverCode: "",
+    },
+  });
+
+  // جلب الدول المتاحة
+  const { data: countries = [], isLoading: countriesLoading, error: countriesError } = useQuery<any[]>({
+    queryKey: ['/api/countries'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/countries');
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const data = await res.json();
+        console.log('Countries data received:', data);
+        return data;
+      } catch (error) {
+        console.error('Error fetching countries:', error);
+        throw error;
+      }
+    }
+  });
+
+  // جلب مكاتب الوكلاء للدولة المختارة
+  useEffect(() => {
+    const fetchOfficesForCountry = async () => {
+      if (selectedCountry && user?.id) {
+        try {
+          console.log('Fetching offices for country:', selectedCountry);
+          console.log('Current user ID:', user.id);
+          
+          const res = await apiRequest("GET", `/api/agent-offices?country=${selectedCountry}`);
+          const offices = await res.json();
+          console.log('All offices received:', offices);
+          
+          // تصفية المكاتب المملوكة لنفس المستخدم
+          const filteredOffices = offices.filter((office: any) => {
+            console.log(`Checking office ${office.id}: agentId=${office.agentId}, currentUser=${user.id}`);
+            return office.agentId !== user.id;
+          });
+          
+          console.log('Filtered offices (excluding current user):', filteredOffices);
+          setAvailableOffices(Array.isArray(filteredOffices) ? filteredOffices : []);
+        } catch (error) {
+          console.error('خطأ في جلب المكاتب:', error);
+          setAvailableOffices([]);
+        }
+      } else {
+        setAvailableOffices([]);
+      }
+    };
+
+    fetchOfficesForCountry();
+  }, [selectedCountry, user?.id]);
+
+  // جلب الأرصدة
+  useEffect(() => {
+    const fetchBalances = async () => {
+      try {
+        const res = await apiRequest('GET', '/api/balance');
+        const data = await res.json();
+        setBalances(data.balances || {});
+      } catch (error) {
+        console.error('خطأ في جلب الأرصدة:', error);
+      }
+    };
+
+    if (user) {
+      fetchBalances();
+    }
+  }, [user]);
+
+  const onSubmit = async (data: any) => {
+    console.log('Form submission started with data:', data);
+    console.log('Selected country:', selectedCountry);
+    
+    try {
+      setIsSubmitting(true);
+      
+      // التحقق من البيانات المطلوبة
+      const receiverName = data.receiverName?.trim();
+      const receiverPhone = data.receiverPhone?.trim();
+      const amount = data.amount;
+      const receivingOffice = data.receivingOffice;
+      
+      if (!receiverName || !receiverPhone || !amount || !receivingOffice || !selectedCountry) {
+        toast({
+          title: "خطأ في البيانات",
+          description: "يرجى ملء جميع الحقول المطلوبة",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      const transferData = {
+        receiverName,
+        receiverPhone,
+        amount: parseFloat(amount),
+        receivingOffice: parseInt(receivingOffice),
+        destinationCountry: selectedCountry,
+        notes: data.notes?.trim() || "",
+        currency: data.currency || "LYD"
+      };
+      
+      console.log('Sending transfer data:', transferData);
+      
+      const response = await apiRequest('POST', '/api/inter-office-transfers', transferData);
+      const result = await response.json();
+      
+      if (response.ok) {
+        // تحديث cache الرصيد والمعاملات والتحويلات
+        queryClient.invalidateQueries({ queryKey: ['/api/balance'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/inter-office-transfers'] });
+        
+        toast({
+          title: "✅ تم إنشاء التحويل بين المكاتب بنجاح",
+          description: `رمز التحويل: ${result.transferCode}\nرمز المستلم: ${result.receiverCode}\nالمبلغ الأصلي: ${result.amountOriginal} د.ل\nعمولة النظام: ${result.commissionSystem} د.ل\nالمجموع المطلوب: ${result.totalRequired} د.ل`,
+          duration: 10000,
+        });
+        
+        form.reset();
+        setSelectedCountry("");
+        setAvailableOffices([]);
+        
+        // إعادة جلب الأرصدة 
+        const fetchBalances = async () => {
+          try {
+            const res = await apiRequest('GET', '/api/balance');
+            const data = await res.json();
+            setBalances(data.balances || {});
+          } catch (error) {
+            console.error('خطأ في جلب الأرصدة:', error);
+          }
+        };
+        fetchBalances();
+      } else {
+        toast({
+          title: "خطأ في التحويل",
+          description: result.message || "حدث خطأ غير متوقع",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Transfer error:', error);
+      toast({
+        title: "خطأ في الاتصال",
+        description: "تعذر الاتصال بالخادم",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // جلب سجل التحويلات بين المكاتب
+  const { data: transfersData = [] } = useQuery<any[]>({
+    queryKey: ['/api/inter-office-transfers', user?.id],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/inter-office-transfers');
+      return await res.json();
+    },
+    enabled: !!user?.id, // تأكد من أن المستخدم مُحدد قبل البحث
+  });
+
+  // جلب بيانات العمولات للوكلاء والمدراء
+  const { data: commissionsData, isLoading: commissionsLoading } = useQuery<CommissionData>({
+    queryKey: ["/api/inter-office-commissions"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/inter-office-commissions");
+      return await res.json();
+    },
+    enabled: (user?.type === "agent" || user?.type === "admin") && !!user?.id
+  });
+
+  // State لإدارة العمولات
+  const [newCommissionRate, setNewCommissionRate] = useState("");
+
+  // تحديث العمولة
+  const updateCommissionMutation = useMutation({
+    mutationFn: async (data: { rate: number }) => {
+      return await apiRequest("POST", "/api/inter-office-commissions", data);
+    },
+    onSuccess: () => {
+      toast({
+        title: "تم تحديث العمولة بنجاح",
+        description: "تم حفظ نسبة العمولة الجديدة وستظهر للمستخدمين الآخرين",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/inter-office-commissions"] });
+      setNewCommissionRate("");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "خطأ في تحديث العمولة",
+        description: error.message || "حدث خطأ أثناء حفظ العمولة",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // دالة حفظ العمولة الجديدة
+  const handleSaveCommission = () => {
+    const rate = parseFloat(newCommissionRate);
+    
+    if (isNaN(rate) || rate < 0 || rate > 100) {
+      toast({
+        title: "قيمة غير صحيحة",
+        description: "يجب أن تكون نسبة العمولة بين 0% و 100%",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateCommissionMutation.mutate({ rate });
+  };
+
+  // دالة اختيار أقل عمولة
+  const handleSelectLowestRate = () => {
+    if (!commissionsData?.otherCommissions?.length) {
+      toast({
+        title: "لا توجد عمولات أخرى",
+        description: "لا يوجد مكاتب أخرى مسجلة لمقارنة العمولات",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const lowestCommission = commissionsData.otherCommissions.reduce((min: any, current: any) => {
+      const currentRate = parseFloat(current.commission);
+      const minRate = parseFloat(min.commission);
+      return currentRate < minRate ? current : min;
+    });
+
+    const lowestRate = parseFloat(lowestCommission.commission);
+    const competitiveRate = Math.max(0, lowestRate - 0.1); // أقل بـ 0.1%
+    
+    setNewCommissionRate(competitiveRate.toFixed(1));
+    
+    toast({
+      title: "تم اختيار نسبة تنافسية",
+      description: `تم تعيين العمولة على ${competitiveRate.toFixed(1)}% (أقل من أدنى منافس بـ 0.1%)`,
+    });
+  };
+
+  // تعبئة الحقل بالعمولة الحالية عند تحميل البيانات
+  useEffect(() => {
+    if (commissionsData?.myCommission) {
+      setNewCommissionRate(commissionsData.myCommission.commission);
+    }
+  }, [commissionsData]);
+
+  if (!user) return null;
+
+  return (
+    <div className="container mx-auto py-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">التحويل بين المكاتب</h1>
+          <p className="text-muted-foreground mt-2">
+            تحويل الأموال إلى مكاتب الصرافة المعتمدة مع نظام خصم العمولات المتقدم
+          </p>
+        </div>
+      </div>
+
+      <Tabs defaultValue="transfer" className="w-full">
+        <TabsList className={`grid w-full ${(user?.type === "agent" || user?.type === "admin") ? "grid-cols-3" : "grid-cols-2"}`}>
+          <TabsTrigger value="transfer">التحويل</TabsTrigger>
+          <TabsTrigger value="history">سجل التحويلات</TabsTrigger>
+          {(user?.type === "agent" || user?.type === "admin") && (
+            <TabsTrigger value="commissions">إعدادات العمولة</TabsTrigger>
+          )}
+        </TabsList>
+        
+        {/* تبويب التحويل */}
+        <TabsContent value="transfer" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* نموذج التحويل */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ArrowRight className="h-5 w-5" />
+                  إجراء تحويل جديد
+                </CardTitle>
+                <CardDescription>
+                  تحويل الأموال مع خصم العمولات مباشرة وحفظ المبلغ للاستلام
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">الدولة المقصودة</label>
+                  <Select
+                    onValueChange={(value) => {
+                      setSelectedCountry(value);
+                      setAvailableOffices([]);
+                      form.setValue("receiverOfficeId", "");
+                    }}
+                    value={selectedCountry}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="اختر الدولة المقصودة" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {countries.map((country) => (
+                        <SelectItem key={country.code} value={country.code}>
+                          {country.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="receiverOfficeId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>اختر المكتب المستلم</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder={selectedCountry ? "اختر المكتب" : "اختر الدولة أولاً"} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {!selectedCountry ? (
+                            <SelectItem value="none" disabled>
+                              يرجى اختيار الدولة أولاً
+                            </SelectItem>
+                          ) : availableOffices.length === 0 ? (
+                            <SelectItem value="none" disabled>
+                              لا توجد مكاتب متاحة في هذه الدولة
+                            </SelectItem>
+                          ) : (
+                            availableOffices.map((office: any) => (
+                              <SelectItem key={office.id} value={office.id.toString()}>
+                                <div className="flex justify-between items-center w-full">
+                                  <span>{office.officeName} - {office.city}</span>
+                                  <span className="text-sm text-green-600 font-semibold">
+                                    {office.commissionRate || office.commission_rate || 1.5}%
+                                  </span>
+                                </div>
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="senderName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>اسم المرسل</FormLabel>
+                        <FormControl>
+                          <Input placeholder="الاسم الكامل" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="senderPhone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>رقم هاتف المرسل</FormLabel>
+                        <FormControl>
+                          <Input placeholder="+218..." {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="receiverName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>اسم المستلم</FormLabel>
+                        <FormControl>
+                          <Input placeholder="الاسم الكامل" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="receiverPhone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>رقم هاتف المستلم</FormLabel>
+                        <FormControl>
+                          <Input placeholder="رقم الهاتف المحلي" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="amount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>المبلغ</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            placeholder="0.00"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="currency"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>العملة</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="LYD">دينار ليبي (LYD)</SelectItem>
+                            <SelectItem value="USD">دولار أمريكي (USD)</SelectItem>
+                            <SelectItem value="EUR">يورو (EUR)</SelectItem>
+                            <SelectItem value="GBP">جنيه إسترليني (GBP)</SelectItem>
+                            <SelectItem value="TRY">ليرة تركية (TRY)</SelectItem>
+                            <SelectItem value="EGP">جنيه مصري (EGP)</SelectItem>
+                            <SelectItem value="AED">درهم إماراتي (AED)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* عرض الرصيد المتاح */}
+                {form.watch("currency") && (
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-sm text-muted-foreground">
+                      الرصيد المتاح: {balances[form.watch("currency")] || "0"} {form.watch("currency")}
+                    </p>
+                  </div>
+                )}
+
+                <FormField
+                  control={form.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>ملاحظات (اختياري)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="أدخل أي ملاحظات..." {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <Button 
+                  type="submit" 
+                  className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" 
+                  disabled={isSubmitting || !selectedCountry}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      جاري إنشاء التحويل...
+                    </>
+                  ) : (
+                    "إنشاء التحويل الدولي"
+                  )}
+                </Button>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
+
+        {/* معلومات إضافية */}
+        <div className="space-y-6">
+          {/* الأرصدة المتاحة */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DollarSign className="h-5 w-5" />
+                الأرصدة المتاحة
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {Object.entries(balances).map(([currency, amount]) => (
+                  <div key={currency} className="flex justify-between items-center">
+                    <span className="font-medium">{currency}</span>
+                    <Badge variant="outline">
+                      {parseFloat(amount).toLocaleString()} {currency}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* المكاتب المعتمدة */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5" />
+                المكاتب المعتمدة دولياً
+              </CardTitle>
+              <CardDescription>
+                {selectedCountry ? `المكاتب المتاحة في ${countries.find(c => c.code === selectedCountry)?.name || selectedCountry}` : 'اختر دولة لعرض المكاتب المعتمدة'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {!selectedCountry ? (
+                  <p className="text-muted-foreground text-center py-4">
+                    يرجى اختيار دولة الوجهة لعرض المكاتب المعتمدة
+                  </p>
+                ) : availableOffices.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-4">
+                    لا توجد مكاتب معتمدة في هذه الدولة
+                  </p>
+                ) : (
+                  availableOffices.map((office: any) => (
+                    <div key={office.id} className="p-2 border rounded-lg">
+                      <div className="font-medium">{office.officeName}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {office.city} • {office.officeCode}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {office.address}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        </TabsContent>
+        
+        {/* تبويب سجل التحويلات */}
+        <TabsContent value="history" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-5 w-5" />
+                سجل التحويلات الدولية
+              </CardTitle>
+              <CardDescription>
+                جميع التحويلات التي قمت بإجرائها بين المكاتب
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {transfersData.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <History className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>لا توجد تحويلات مسجلة بعد</p>
+                  <p className="text-sm">ابدأ بإجراء تحويل جديد</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>المستلم</TableHead>
+                      <TableHead>الدولة</TableHead>
+                      <TableHead>المبلغ</TableHead>
+                      <TableHead>رمز التحويل</TableHead>
+                      <TableHead>الحالة</TableHead>
+                      <TableHead>التاريخ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {transfersData.map((transfer: any) => (
+                      <TableRow key={transfer.id}>
+                        <TableCell className="font-medium">{transfer.receiverName}</TableCell>
+                        <TableCell>{transfer.destinationCountry}</TableCell>
+                        <TableCell>
+                          {parseFloat(transfer.amount).toLocaleString()} {transfer.currency || 'LYD'}
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-mono text-sm">
+                            {transfer.senderId === user?.id ? transfer.transferCode : "***"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={transfer.status === 'completed' ? 'default' : 'secondary'}>
+                            {transfer.status === 'completed' ? 'مكتمل' : 'معلق'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm text-muted-foreground">
+                            {new Date(transfer.createdAt).toLocaleDateString('ar-EG')}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* تبويب إعدادات العمولة للوكلاء والمدراء */}
+        {(user?.type === "agent" || user?.type === "admin") && (
+          <TabsContent value="commissions" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* إعداد عمولة المكتب */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Percent className="h-5 w-5" />
+                    إعداد عمولة المكتب
+                  </CardTitle>
+                  <CardDescription>
+                    حدد نسبة العمولة التي يتقاضاها مكتبك من التحويلات الواردة
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">نسبة العمولة (%)</label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="100"
+                        placeholder="1.5"
+                        value={newCommissionRate}
+                        onChange={(e) => setNewCommissionRate(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button 
+                        onClick={handleSaveCommission}
+                        disabled={updateCommissionMutation.isPending}
+                        className="flex items-center gap-2"
+                      >
+                        {updateCommissionMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Save className="h-4 w-4" />
+                        )}
+                        حفظ
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      النسبة الافتراضية 1.5%. يمكن تعديلها من 0% إلى 100%
+                    </p>
+                  </div>
+
+                  {/* اختيار نسبة تنافسية */}
+                  <div className="space-y-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={handleSelectLowestRate}
+                      className="w-full flex items-center gap-2"
+                    >
+                      <TrendingDown className="h-4 w-4" />
+                      اختيار نسبة تنافسية (أقل من المنافسين)
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      يختار تلقائياً نسبة أقل من أدنى عمولة في السوق بـ 0.1%
+                    </p>
+                  </div>
+
+                  {/* العمولة الحالية */}
+                  {commissionsData?.myCommission && (
+                    <div className="p-3 bg-muted rounded-lg">
+                      <div className="text-sm font-medium">العمولة الحالية</div>
+                      <div className="text-lg font-bold text-primary">
+                        {commissionsData.myCommission.commission}%
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* عمولات المكاتب الأخرى */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    عمولات المكاتب الأخرى
+                  </CardTitle>
+                  <CardDescription>
+                    مقارنة عمولاتك مع المكاتب المنافسة في السوق
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {commissionsData?.otherCommissions?.length > 0 ? (
+                    <div className="space-y-4">
+                      {/* إحصائيات سريعة */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-3 bg-green-50 rounded-lg">
+                          <div className="text-sm font-medium text-green-800">أقل عمولة</div>
+                          <div className="text-lg font-bold text-green-600">
+                            {Math.min(...commissionsData.otherCommissions.map((c: any) => parseFloat(c.commission))).toFixed(1)}%
+                          </div>
+                        </div>
+                        <div className="p-3 bg-red-50 rounded-lg">
+                          <div className="text-sm font-medium text-red-800">أعلى عمولة</div>
+                          <div className="text-lg font-bold text-red-600">
+                            {Math.max(...commissionsData.otherCommissions.map((c: any) => parseFloat(c.commission))).toFixed(1)}%
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* قائمة العمولات */}
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {commissionsData.otherCommissions
+                          .sort((a: any, b: any) => parseFloat(a.commission) - parseFloat(b.commission))
+                          .map((commission: any, index: number) => (
+                            <div key={commission.agentId} className="flex justify-between items-center p-2 border rounded">
+                              <span className="text-sm">مكتب #{commission.agentId}</span>
+                              <Badge variant={index === 0 ? "default" : "secondary"}>
+                                {commission.commission}%
+                              </Badge>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 text-muted-foreground">
+                      <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">لا توجد مكاتب أخرى مسجلة</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        )}
+      </Tabs>
+    </div>
+  );
+}

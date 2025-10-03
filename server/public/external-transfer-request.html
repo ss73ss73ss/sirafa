@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>طلب تحويل خارجي - منصة الصرافة</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            background: white; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); 
+            overflow: hidden;
+        }
+        .header {
+            background: #2563eb;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { margin: 0; font-size: 28px; }
+        .header p { margin: 10px 0 0; opacity: 0.9; }
+        .form-container { padding: 40px; }
+        .form-group { margin-bottom: 25px; }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 600; 
+            color: #374151;
+        }
+        input, select, textarea { 
+            width: 100%; 
+            padding: 12px 16px; 
+            border: 2px solid #e5e7eb; 
+            border-radius: 8px; 
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+        input:focus, select:focus, textarea:focus { 
+            border-color: #2563eb; 
+            outline: none; 
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        .row { display: flex; gap: 20px; }
+        .col { flex: 1; }
+        .submit-btn { 
+            background: #16a34a; 
+            color: white; 
+            padding: 16px 32px; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 18px; 
+            font-weight: 600;
+            cursor: pointer; 
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+        .submit-btn:hover { background: #15803d; }
+        .submit-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+        .currency-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 12px; 
+            margin-top: 10px; 
+        }
+        .currency-item { 
+            display: flex; 
+            align-items: center; 
+            padding: 10px; 
+            border: 2px solid #e5e7eb; 
+            border-radius: 8px;
+            transition: border-color 0.3s ease;
+        }
+        .currency-item:has(input:checked) { border-color: #2563eb; background: #eff6ff; }
+        .currency-item input { width: auto; margin-left: 8px; }
+        .success-message {
+            background: #dcfce7; 
+            border: 2px solid #16a34a; 
+            color: #166534; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            text-align: center;
+            display: none;
+        }
+        .error-message {
+            background: #fef2f2; 
+            border: 2px solid #ef4444; 
+            color: #dc2626; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>طلب تحويل خارجي</h1>
+            <p>قم بتعبئة النموذج أدناه لطلب ترقية لخدمات التحويل الخارجي</p>
+        </div>
+        
+        <div class="form-container">
+            <div id="successMessage" class="success-message">
+                <h3>✅ تم إرسال طلبك بنجاح!</h3>
+                <p>سيتم مراجعة طلبك وإشعارك بالموافقة قريباً.</p>
+            </div>
+            
+            <div id="errorMessage" class="error-message">
+                <h3>❌ خطأ في الإرسال</h3>
+                <p id="errorText">حدث خطأ أثناء إرسال الطلب. يرجى المحاولة مرة أخرى.</p>
+            </div>
+            
+            <form id="transferForm">
+                <!-- معلومات المستخدم -->
+                <div class="form-group">
+                    <h3 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">معلومات الحساب</h3>
+                </div>
+                
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group">
+                            <label for="accountNumber">رقم الحساب</label>
+                            <input type="text" id="accountNumber" value="ACC001" readonly style="background: #f9fafb;">
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group">
+                            <label for="phoneNumber">رقم الهاتف</label>
+                            <input type="text" id="phoneNumber" value="+218XXXXXXXX" readonly style="background: #f9fafb;">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- تحديد الدولة والمدينة -->
+                <div class="form-group">
+                    <h3 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">وجهة التحويل</h3>
+                </div>
+                
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group">
+                            <label for="country">الدولة *</label>
+                            <select id="country" required>
+                                <option value="">اختر الدولة</option>
+                                <option value="EG">مصر</option>
+                                <option value="TN">تونس</option>
+                                <option value="TR">تركيا</option>
+                                <option value="AE">الإمارات العربية المتحدة</option>
+                                <option value="SA">المملكة العربية السعودية</option>
+                                <option value="US">الولايات المتحدة الأمريكية</option>
+                                <option value="GB">المملكة المتحدة</option>
+                                <option value="DE">ألمانيا</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group">
+                            <label for="city">المدينة</label>
+                            <input type="text" id="city" placeholder="اكتب اسم المدينة">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- الحدود المطلوبة -->
+                <div class="form-group">
+                    <h3 style="color: #2563eb; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">الحدود المطلوبة</h3>
+                </div>
+                
+                <div class="row">
+                    <div class="col">
+                        <div class="form-group">
+                            <label for="dailyLimit">الحد اليومي (USD) *</label>
+                            <input type="number" id="dailyLimit" min="100" max="100000" placeholder="1000" required>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="form-group">
+                            <label for="monthlyLimit">الحد الشهري (USD) *</label>
+                            <input type="number" id="monthlyLimit" min="1000" max="1000000" placeholder="10000" required>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- العملات المطلوبة -->
+                <div class="form-group">
+                    <label>العملات المطلوبة *</label>
+                    <div class="currency-grid">
+                        <div class="currency-item">
+                            <input type="checkbox" id="usd" name="currencies" value="USD">
+                            <label for="usd">دولار أمريكي (USD)</label>
+                        </div>
+                        <div class="currency-item">
+                            <input type="checkbox" id="eur" name="currencies" value="EUR">
+                            <label for="eur">يورو (EUR)</label>
+                        </div>
+                        <div class="currency-item">
+                            <input type="checkbox" id="gbp" name="currencies" value="GBP">
+                            <label for="gbp">جنيه إسترليني (GBP)</label>
+                        </div>
+                        <div class="currency-item">
+                            <input type="checkbox" id="try" name="currencies" value="TRY">
+                            <label for="try">ليرة تركية (TRY)</label>
+                        </div>
+                        <div class="currency-item">
+                            <input type="checkbox" id="aed" name="currencies" value="AED">
+                            <label for="aed">درهم إماراتي (AED)</label>
+                        </div>
+                        <div class="currency-item">
+                            <input type="checkbox" id="egp" name="currencies" value="EGP">
+                            <label for="egp">جنيه مصري (EGP)</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- رسالة إضافية -->
+                <div class="form-group">
+                    <label for="message">رسالة إضافية (اختيارية)</label>
+                    <textarea id="message" rows="4" placeholder="أي معلومات إضافية تود إضافتها..."></textarea>
+                </div>
+                
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    إرسال الطلب
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('transferForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const successMessage = document.getElementById('successMessage');
+            const errorMessage = document.getElementById('errorMessage');
+            
+            // إخفاء الرسائل السابقة
+            successMessage.style.display = 'none';
+            errorMessage.style.display = 'none';
+            
+            // تعطيل الزر أثناء الإرسال
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'جاري الإرسال...';
+            
+            // جمع البيانات
+            const formData = {
+                countryId: document.getElementById('country').value,
+                cityNameManual: document.getElementById('city').value,
+                message: document.getElementById('message').value,
+                requestedLimits: {
+                    daily: parseInt(document.getElementById('dailyLimit').value),
+                    monthly: parseInt(document.getElementById('monthlyLimit').value),
+                    currencies: Array.from(document.querySelectorAll('input[name="currencies"]:checked')).map(cb => cb.value)
+                }
+            };
+            
+            // التحقق من البيانات المطلوبة
+            if (!formData.countryId) {
+                alert('يرجى اختيار الدولة');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'إرسال الطلب';
+                return;
+            }
+            
+            if (formData.requestedLimits.currencies.length === 0) {
+                alert('يرجى اختيار عملة واحدة على الأقل');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'إرسال الطلب';
+                return;
+            }
+            
+            try {
+                // محاكاة إرسال البيانات
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                
+                // عرض رسالة النجاح
+                successMessage.style.display = 'block';
+                successMessage.scrollIntoView({ behavior: 'smooth' });
+                
+                // مسح النموذج
+                document.getElementById('transferForm').reset();
+                
+            } catch (error) {
+                errorMessage.style.display = 'block';
+                document.getElementById('errorText').textContent = error.message || 'حدث خطأ غير متوقع';
+                errorMessage.scrollIntoView({ behavior: 'smooth' });
+            }
+            
+            // إعادة تفعيل الزر
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'إرسال الطلب';
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,648 @@
+import { useEffect, useState, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useParams, useLocation } from "wouter";
+import { Send, Users, UserPlus, Smile } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card } from "@/components/ui/card";
+import EmojiPicker, { Theme, EmojiClickData } from "emoji-picker-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogClose,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import DashboardLayout from "@/components/dashboard-layout";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Helmet } from "react-helmet";
+import { io, Socket } from "socket.io-client";
+import { useCustomToast } from "@/components/ui/custom-toast";
+import { useDebugUser } from "@/hooks/use-debug-user";
+
+// نوع رسالة المجموعة
+interface GroupMessage {
+  id: number;
+  groupId: number;
+  senderId: number;
+  content: string;
+  createdAt: string;
+  senderName: string;
+}
+
+// نوع عضو المجموعة
+interface GroupMember {
+  id: number;
+  groupId: number;
+  userId: number;
+  role: string;
+  joinedAt: string;
+  fullName: string;
+}
+
+// نوع مجموعة الدردشة
+interface GroupChat {
+  id: number;
+  name: string;
+  description: string | null;
+  creatorId: number;
+  isPrivate: boolean;
+  createdAt: string;
+}
+
+// نوع المستخدم المتاح للإضافة
+interface AvailableUser {
+  id: number;
+  fullName: string;
+}
+
+export default function GroupChatPage() {
+  const { groupId } = useParams<{ groupId: string }>();
+  const [_, navigate] = useLocation();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [newMessage, setNewMessage] = useState("");
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const { showMessage } = useCustomToast();
+  const [addMemberDialogOpen, setAddMemberDialogOpen] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [typingTimeout, setTypingTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [usersTyping, setUsersTyping] = useState<string[]>([]);
+  
+  // الحصول على معرف المستخدم الحالي
+  const getUserId = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      if (!userData) return null;
+      return JSON.parse(userData).id;
+    } catch (error) {
+      console.error("خطأ في الحصول على معرف المستخدم:", error);
+      return null;
+    }
+  };
+  
+  // الحصول على اسم المستخدم الحالي
+  const getUserName = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      if (!userData) return "مستخدم";
+      return JSON.parse(userData).fullName || "مستخدم";
+    } catch (error) {
+      console.error("خطأ في الحصول على اسم المستخدم:", error);
+      return "مستخدم";
+    }
+  };
+  
+  const currentUserId = getUserId();
+  
+  // استخدام أداة تشخيص بيانات المستخدم
+  useDebugUser();
+
+  // جلب معلومات المجموعة
+  const {
+    data: group,
+    isLoading: isGroupLoading,
+    error: groupError,
+  } = useQuery({
+    queryKey: ['/api/chat/groups', groupId],
+    enabled: !!groupId,
+    retry: false,
+  });
+
+  // جلب رسائل المجموعة
+  const {
+    data: messages,
+    isLoading: isMessagesLoading,
+    error: messagesError,
+  } = useQuery({
+    queryKey: [`/api/chat/groups/${groupId}/messages`],
+    enabled: !!groupId,
+    refetchOnWindowFocus: false,
+  });
+
+  // جلب أعضاء المجموعة
+  const {
+    data: members,
+    isLoading: isMembersLoading,
+    error: membersError,
+  } = useQuery({
+    queryKey: [`/api/chat/groups/${groupId}/members`],
+    enabled: !!groupId,
+    refetchOnWindowFocus: false,
+  });
+
+  // جلب المستخدمين المتاحين للإضافة
+  const {
+    data: availableUsers,
+    isLoading: isAvailableUsersLoading,
+  } = useQuery({
+    queryKey: ['/api/users/available'],
+    enabled: addMemberDialogOpen,
+  });
+
+  // تمرير للأسفل عند إضافة رسائل جديدة
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // إعداد اتصال Socket.IO لتلقي التحديثات
+  useEffect(() => {
+    if (!groupId) return;
+
+    console.log("محاولة إعداد Socket.IO للتحديثات...");
+    
+    const newSocket = io('/', {
+      path: '/socket.io',
+      transports: ['websocket'],
+      reconnection: true
+    });
+    
+    newSocket.on('connect', () => {
+      console.log("✅ تم الاتصال بخادم Socket.IO للتحديثات:", newSocket.id);
+      setIsConnected(true);
+      
+      // الانضمام إلى غرفة المجموعة
+      newSocket.emit('joinGroupChat', parseInt(groupId));
+    });
+
+    newSocket.on('disconnect', () => {
+      console.log("❌ انقطع الاتصال بخادم التحديثات");
+      setIsConnected(false);
+    });
+    
+    newSocket.on('newGroupMessage', (data: any) => {
+      console.log("تم استلام رسالة جديدة:", data);
+      
+      if (data && data.groupId === parseInt(groupId)) {
+        queryClient.invalidateQueries({ queryKey: [`/api/chat/groups/${groupId}/messages`] });
+      }
+    });
+    
+    // الاستماع لأحداث الكتابة
+    newSocket.on('userTyping', (data: { userId: number; userName: string }) => {
+      console.log("المستخدم يكتب الآن:", data);
+      if (data.userId !== currentUserId) {
+        setUsersTyping(prev => {
+          if (!prev.includes(data.userName)) {
+            console.log("إضافة مستخدم يكتب الآن:", data.userName);
+            return [...prev, data.userName];
+          }
+          return prev;
+        });
+      }
+    });
+    
+    // الاستماع لأحداث التوقف عن الكتابة
+    newSocket.on('userStoppedTyping', (data: { userId: number; userName: string }) => {
+      console.log("المستخدم توقف عن الكتابة:", data);
+      if (data.userId !== currentUserId) {
+        setUsersTyping(prev => {
+          console.log("إزالة مستخدم توقف عن الكتابة:", data.userName);
+          return prev.filter(name => name !== data.userName);
+        });
+      }
+    });
+
+    setSocket(newSocket);
+
+    return () => {
+      newSocket.disconnect();
+    };
+  }, [groupId, queryClient]);
+
+  // الحصول على معرف المستخدم الحالي
+  const getUserId = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      if (!userData) return null;
+      return JSON.parse(userData).id;
+    } catch (error) {
+      console.error("خطأ في الحصول على معرف المستخدم:", error);
+      return null;
+    }
+  };
+  
+  // الحصول على اسم المستخدم الحالي
+  const getUserName = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      if (!userData) return "مستخدم";
+      return JSON.parse(userData).fullName || "مستخدم";
+    } catch (error) {
+      console.error("خطأ في الحصول على اسم المستخدم:", error);
+      return "مستخدم";
+    }
+  };
+  
+  const currentUserId = getUserId();
+  
+  // معالجة أحداث الكتابة
+  useEffect(() => {
+    if (!socket || !groupId || !currentUserId) return;
+    
+    if (newMessage.trim()) {
+      // إرسال حدث "يكتب الآن"
+      socket.emit('typing', { 
+        roomType: 'group', 
+        roomId: parseInt(groupId), 
+        userId: currentUserId, 
+        userName: getUserName() 
+      });
+      
+      // إلغاء المؤقت السابق إذا وجد
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
+      }
+      
+      // إعداد مؤقت جديد للتوقف عن الكتابة بعد ثانيتين
+      const newTimeout = setTimeout(() => {
+        socket.emit('stopTyping', { 
+          roomType: 'group', 
+          roomId: parseInt(groupId), 
+          userId: currentUserId,
+          userName: getUserName()
+        });
+      }, 2000);
+      
+      setTypingTimeout(newTimeout);
+    } else {
+      // إرسال حدث التوقف عن الكتابة فورا عند مسح النص
+      socket.emit('stopTyping', { 
+        roomType: 'group', 
+        roomId: parseInt(groupId), 
+        userId: currentUserId,
+        userName: getUserName()
+      });
+    }
+    
+    // تنظيف المؤقت عند إلغاء تحميل المكون
+    return () => {
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
+      }
+    };
+  }, [newMessage, socket, groupId, currentUserId, typingTimeout]);
+  
+  // الحصول على اسم المستخدم الحالي
+  const getUserName = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      if (!userData) return "مستخدم";
+      return JSON.parse(userData).fullName || "مستخدم";
+    } catch (error) {
+      console.error("خطأ في الحصول على اسم المستخدم:", error);
+      return "مستخدم";
+    }
+  };
+
+  // إرسال رسالة جديدة باستخدام HTTP API
+  const sendMessage = async () => {
+    // التأكد من وجود النص والمعرفات
+    const messageText = newMessage.trim();
+    if (!messageText) {
+      showMessage("لا يمكن إرسال رسالة فارغة", true);
+      return;
+    }
+    
+    // التحقق من وجود معرف المجموعة
+    if (!groupId) {
+      showMessage("معرف المجموعة غير متوفر", true);
+      return;
+    }
+    
+    // عدم الحاجة للتحقق من معرف المستخدم هنا لأن الخادم سيستخدم توكن المصادقة للتعرف على المستخدم
+
+    console.log("محاولة إرسال رسالة:", messageText);
+
+    try {
+      // الطريقة المباشرة باستخدام fetch بدلاً من apiRequest للتشخيص
+      const token = localStorage.getItem("auth_token");
+      if (!token) {
+        console.log("❌ توكن المصادقة غير موجود، يرجى تسجيل الدخول مرة أخرى");
+        showMessage("خطأ في المصادقة - يرجى تسجيل الدخول مرة أخرى", true);
+        return;
+      } else {
+        console.log("✅ توكن المصادقة موجود:", token.substring(0, 15) + "...");
+      }
+      
+      // إنشاء بيانات الرسالة
+      const messageData = {
+        content: messageText
+      };
+      
+      // إرسال الرسالة باستخدام fetch مباشرة مع إضافة التوكن
+      console.log("🔄 جاري إرسال الرسالة عبر API...");
+      console.log("🔶 بيانات الرسالة:", messageData);
+      
+      const response = await fetch(`/api/chat/groups/${groupId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(messageData)
+      });
+      
+      console.log("✅ تم استلام استجابة الخادم:", response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "فشل في إرسال الرسالة");
+      }
+      
+      console.log("✅ تم إرسال الرسالة بنجاح");
+      
+      // مسح حقل الإدخال
+      setNewMessage("");
+      
+      // تحديث قائمة الرسائل
+      queryClient.invalidateQueries({ queryKey: [`/api/chat/groups/${groupId}/messages`] });
+      
+      // التمرير للأسفل
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    } catch (error: any) {
+      // تسجيل الخطأ في وحدة التحكم
+      console.error("خطأ أثناء إرسال الرسالة:", error);
+      
+      // استخدام نسخة مبسطة من toast لتجنب المشكلة
+      const errorMessage = error.message || "حدث خطأ أثناء محاولة إرسال الرسالة";
+      console.log("رسالة الخطأ:", errorMessage);
+      
+      // استخدام showMessage بدلاً من toast لتجنب المشكلة
+      showMessage("فشل إرسال الرسالة: " + errorMessage, true);
+    }
+  };
+
+  // معالجة إضافة عضو جديد
+  const handleAddMember = async () => {
+    if (!selectedUserId || !groupId) {
+      showMessage("يرجى اختيار مستخدم لإضافته", true);
+      return;
+    }
+
+    try {
+      const res = await apiRequest(
+        "POST",
+        `/api/chat/groups/${groupId}/members`,
+        { memberId: selectedUserId, role: "member" }
+      );
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "فشل في إضافة العضو");
+      }
+
+      // تحديث قائمة الأعضاء
+      queryClient.invalidateQueries({ queryKey: [`/api/chat/groups/${groupId}/members`] });
+      
+      showMessage("تمت إضافة العضو الجديد إلى المجموعة بنجاح", false);
+      
+      setAddMemberDialogOpen(false);
+      setSelectedUserId(null);
+    } catch (error: any) {
+      showMessage(error.message || "حدث خطأ أثناء إضافة العضو", true);
+    }
+  };
+
+  // الحصول على معرف المستخدم الحالي
+  const getUserId = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      if (!userData) return null;
+      return JSON.parse(userData).id;
+    } catch (error) {
+      console.error("خطأ في الحصول على معرف المستخدم:", error);
+      return null;
+    }
+  };
+  
+  const currentUserId = getUserId();
+  
+  // التحقق مما إذا كان المستخدم الحالي هو مسؤول المجموعة
+  const isAdmin = Array.isArray(members) && members.some(
+    (member: GroupMember) => member.userId === currentUserId && member.role === "admin"
+  );
+
+  // تنسيق رسائل المجموعة (الأحدث في الأسفل)
+  const formattedMessages = Array.isArray(messages) ? [...messages].reverse() : [];
+
+  if (isGroupLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[300px]">
+          <div className="loader"></div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout>
+      <Helmet>
+        <title>{group && group.name ? group.name : "مجموعة محادثة"} | منصة الصرافة</title>
+        <meta name="description" content={`محادثة جماعية - ${group && group.name ? group.name : ""}`} />
+      </Helmet>
+
+      <div className="container py-6 max-w-screen-xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* معلومات المجموعة وقائمة الأعضاء */}
+          <div className="lg:col-span-1">
+            <Card className="p-4 mb-4">
+              <h2 className="text-xl font-bold mb-2">{group && group.name ? group.name : "مجموعة"}</h2>
+              {group && group.description && (
+                <p className="text-gray-600 mb-4">{group.description}</p>
+              )}
+              <div className="flex items-center space-x-2 mb-2">
+                <Users size={18} />
+                <span className="text-sm mr-2">
+                  {Array.isArray(members) ? members.length : 0} عضو
+                </span>
+              </div>
+              <div className="mt-4">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="w-full" 
+                  onClick={() => navigate("/dashboard")}
+                >
+                  العودة إلى لوحة التحكم
+                </Button>
+              </div>
+            </Card>
+
+            <Card className="p-4">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold">الأعضاء</h3>
+                {isAdmin && (
+                  <Dialog open={addMemberDialogOpen} onOpenChange={setAddMemberDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button size="sm" variant="outline">
+                        <UserPlus size={16} className="ml-2" />
+                        إضافة عضو
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[425px]">
+                      <DialogHeader>
+                        <DialogTitle>إضافة عضو جديد</DialogTitle>
+                        <DialogDescription>
+                          اختر مستخدماً لإضافته إلى المجموعة
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-4 py-4">
+                        <Select
+                          value={selectedUserId?.toString() || ""}
+                          onValueChange={(value) => setSelectedUserId(parseInt(value))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="اختر مستخدماً" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {isAvailableUsersLoading ? (
+                              <SelectItem value="loading" disabled>
+                                جاري التحميل...
+                              </SelectItem>
+                            ) : (
+                              availableUsers && Array.isArray(availableUsers) && availableUsers
+                                .filter((user: AvailableUser) => 
+                                  !members?.some((member: GroupMember) => member.userId === user.id)
+                                )
+                                .map((user: AvailableUser) => (
+                                  <SelectItem key={user.id} value={user.id.toString()}>
+                                    {user.fullName}
+                                  </SelectItem>
+                                ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex justify-end gap-3">
+                        <DialogClose asChild>
+                          <Button variant="outline">إلغاء</Button>
+                        </DialogClose>
+                        <Button type="button" onClick={handleAddMember}>
+                          إضافة
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
+
+              {isMembersLoading ? (
+                <div className="flex justify-center p-4">
+                  <div className="loader"></div>
+                </div>
+              ) : (
+                <ScrollArea className="h-[300px] pr-4">
+                  <div className="space-y-2">
+                    {Array.isArray(members) && members.map((member: GroupMember) => (
+                      <div
+                        key={member.id}
+                        className="flex items-center justify-between p-2 rounded-md hover:bg-gray-100"
+                      >
+                        <span>{member.fullName}</span>
+                        {member.role === "admin" && (
+                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                            مدير
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </Card>
+          </div>
+
+          {/* منطقة المحادثة */}
+          <div className="lg:col-span-3 flex flex-col h-[calc(100vh-220px)]">
+            <Card className="flex-1 mb-4 p-4 overflow-hidden">
+              {isMessagesLoading ? (
+                <div className="flex justify-center items-center h-full">
+                  <div className="loader"></div>
+                </div>
+              ) : formattedMessages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                  <p className="mb-2">لا توجد رسائل بعد</p>
+                  <p>كن أول من يبدأ المحادثة في هذه المجموعة</p>
+                </div>
+              ) : (
+                <ScrollArea className="h-full pr-4">
+                  <div className="space-y-4">
+                    {formattedMessages.map((message: GroupMessage) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${
+                          message.senderId === currentUserId ? "justify-end" : "justify-start"
+                        }`}
+                      >
+                        <div
+                          className={`max-w-[80%] px-4 py-2 rounded-lg ${
+                            message.senderId === currentUserId
+                              ? "bg-blue-500 text-white"
+                              : "bg-gray-100"
+                          }`}
+                        >
+                          {message.senderId !== currentUserId && (
+                            <div className="font-bold text-sm text-gray-600 mb-1">
+                              {message.senderName}
+                            </div>
+                          )}
+                          <div className="text-sm">{message.content}</div>
+                          <div className="text-xs mt-1 opacity-70">
+                            {new Date(message.createdAt).toLocaleTimeString("ar-LY", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </div>
+                </ScrollArea>
+              )}
+            </Card>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="اكتب رسالتك هنا..."
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  dir="rtl"
+                />
+                <Button 
+                  onClick={() => sendMessage()} 
+                  size="icon"
+                  title="إرسال"
+                >
+                  <Send size={18} />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}

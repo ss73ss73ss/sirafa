@@ -1,0 +1,109 @@
+{
+  "id": "/",
+  "name": "منصة الصرافة",
+  "short_name": "الصرافة",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#FFD700",
+  "description": "منصة شاملة لخدمات الصرافة والتحويلات المالية مع واجهة محمولة متكيفة",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "تحويل سريع",
+      "short_name": "تحويل",
+      "description": "إجراء تحويل مالي سريع",
+      "url": "/internal-transfer",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "الرصيد",
+      "short_name": "الرصيد",
+      "description": "عرض رصيد الحساب",
+      "url": "/balance",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "سوق العملات",
+      "short_name": "السوق",
+      "description": "تداول العملات",
+      "url": "/market",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "الخدمات الدولية",
+      "short_name": "الدولية",
+      "description": "التحويل الدولي وإعدادات العمولة",
+      "url": "/international",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "categories": ["finance", "business"],
+  "lang": "ar",
+  "dir": "rtl",
+  "display_override": ["standalone", "minimal-ui"],
+  "prefer_related_applications": false
+}

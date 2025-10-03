@@ -1,0 +1,476 @@
+import { useEffect, useState, useRef, FormEvent } from "react";
+import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { User, MessageSquare, Send, MessageCircle, Smile } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import io, { Socket } from "socket.io-client";
+import EmojiPicker, { Theme, EmojiClickData } from 'emoji-picker-react';
+import { apiRequest } from "@/lib/queryClient";
+
+// تحديد واجهة الرسالة
+interface ChatMessage {
+  id: number;
+  roomId: number;
+  senderId: number;
+  content: string;
+  createdAt: string;
+  senderName: string;
+  isEdited?: boolean;
+  editedAt?: string;
+}
+
+// واجهة غرفة المحادثة
+interface ChatRoom {
+  id: number;
+  name: string;
+  description: string | null;
+  isPublic: boolean;
+  createdAt: string;
+}
+
+export default function ChatPage() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [room, setRoom] = useState<ChatRoom | null>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [usersTyping, setUsersTyping] = useState<string[]>([]);
+  const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // جلب الغرفة العامة
+  const { data: publicRoom } = useQuery<ChatRoom>({
+    queryKey: ['/api/chat/public-room'],
+    enabled: !!user,
+  });
+  
+  // جلب رسائل الغرفة عند تحميل الصفحة
+  const { data: initialMessages } = useQuery<ChatMessage[]>({
+    queryKey: ['/api/chat/messages', publicRoom?.id],
+    enabled: !!publicRoom?.id && !!publicRoom.id,
+  });
+  
+  // التمرير إلى أسفل عند إضافة رسائل جديدة
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  // معالجة حدث الكتابة
+  useEffect(() => {
+    if (!socket || !user || !room) return;
+    
+    if (inputMessage.trim()) {
+      // إرسال حدث "يكتب الآن"
+      socket.emit('typing', { 
+        roomType: 'room', 
+        roomId: room.id, 
+        userId: user.id, 
+        userName: user.fullName 
+      });
+      
+      // إلغاء المؤقت السابق إذا وجد
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
+      }
+      
+      // إعداد مؤقت جديد للتوقف عن الكتابة بعد ثانيتين
+      const newTimeout = setTimeout(() => {
+        socket.emit('stopTyping', { 
+          roomType: 'room', 
+          roomId: room.id, 
+          userId: user.id,
+          userName: user.fullName 
+        });
+      }, 2000);
+      
+      setTypingTimeout(newTimeout);
+    } else {
+      // إرسال حدث التوقف عن الكتابة فورا عند مسح النص
+      socket.emit('stopTyping', { 
+        roomType: 'room', 
+        roomId: room.id, 
+        userId: user.id,
+        userName: user.fullName 
+      });
+    }
+    
+    // تنظيف المؤقت عند إلغاء تحميل المكون
+    return () => {
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
+      }
+    };
+  }, [inputMessage, socket, user, room, typingTimeout]);
+  
+  // إنشاء اتصال Socket.IO عند تحميل الصفحة
+  useEffect(() => {
+    if (!user) return;
+    
+    // تحديد عنوان الخادم
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}`;
+    
+    // إنشاء اتصال Socket.IO مع مسار socket.io الصحيح
+    const newSocket = io(wsUrl, {
+      path: '/socket.io',
+      transports: ['websocket']
+    });
+    
+    // الاستماع لأحداث الاتصال
+    newSocket.on('connect', () => {
+      console.log('تم الاتصال بخادم الدردشة');
+    });
+    
+    // الاستماع لأحداث قطع الاتصال
+    newSocket.on('disconnect', () => {
+      console.log('انقطع الاتصال بخادم الدردشة');
+    });
+    
+    // الاستماع لتاريخ الرسائل
+    newSocket.on('chatHistory', (history: ChatMessage[]) => {
+      setMessages(history);
+      setTimeout(scrollToBottom, 100);
+    });
+    
+    // الاستماع للرسائل الجديدة
+    newSocket.on('newMessage', (message: ChatMessage) => {
+      console.log("تم استلام رسالة جديدة:", message);
+      setMessages(prev => [...prev, message]);
+      setTimeout(scrollToBottom, 100);
+    });
+    
+    // الاستماع للأخطاء
+    newSocket.on('error', (error) => {
+      console.error('خطأ في الاتصال بالدردشة:', error);
+    });
+    
+    // الاستماع لأحداث الكتابة
+    newSocket.on('userTyping', (data: { userId: number; userName: string }) => {
+      console.log("المستخدم يكتب الآن:", data);
+      if (data.userId !== user.id) {
+        setUsersTyping(prev => {
+          if (!prev.includes(data.userName)) {
+            console.log("إضافة مستخدم يكتب الآن:", data.userName);
+            return [...prev, data.userName];
+          }
+          return prev;
+        });
+      }
+    });
+    
+    // الاستماع لأحداث التوقف عن الكتابة
+    newSocket.on('userStoppedTyping', (data: { userId: number; userName: string }) => {
+      console.log("المستخدم توقف عن الكتابة:", data);
+      if (data.userId !== user.id) {
+        setUsersTyping(prev => {
+          console.log("إزالة مستخدم توقف عن الكتابة:", data.userName);
+          return prev.filter(name => name !== data.userName);
+        });
+      }
+    });
+    
+    // تخزين الاتصال في الحالة
+    setSocket(newSocket);
+    
+    // إغلاق الاتصال عند مغادرة الصفحة
+    return () => {
+      newSocket.disconnect();
+    };
+  }, [user]);
+  
+  // تحديث الغرفة عند جلب البيانات
+  useEffect(() => {
+    if (publicRoom && publicRoom.id) {
+      setRoom(publicRoom);
+    }
+  }, [publicRoom]);
+  
+  // تحديث الرسائل عند جلب البيانات الأولية
+  useEffect(() => {
+    if (initialMessages && Array.isArray(initialMessages)) {
+      console.log("تم جلب الرسائل الأولية:", initialMessages);
+      setMessages(initialMessages);
+      setTimeout(scrollToBottom, 100);
+    }
+  }, [initialMessages]);
+  
+  // إرسال رسالة جديدة
+  const handleSendMessage = (e: FormEvent) => {
+    e.preventDefault();
+    
+    if (!inputMessage.trim() || !user || !room) return;
+    
+    // إرسال الرسالة عبر WebSocket
+    if (socket) {
+      socket.emit('sendMessage', {
+        userId: user.id,
+        content: inputMessage,
+        roomId: room.id
+      });
+      
+      // مسح مربع الإدخال
+      setInputMessage("");
+    }
+  };
+  
+  // تنسيق التاريخ لعرضه
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+  };
+  
+  if (!user) {
+    return (
+      <Card className="w-full max-w-4xl mx-auto mt-8">
+        <CardHeader className="text-center">
+          <CardTitle>الدردشة العامة</CardTitle>
+          <CardDescription>يرجى تسجيل الدخول للوصول إلى الدردشة</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+  
+  // جلب قائمة المستخدمين المتاحين للدردشة
+  const { data: availableUsers = [], isLoading: isLoadingUsers } = useQuery<any[]>({
+    queryKey: ['/api/users/available'],
+    enabled: !!user,
+  });
+  
+  // بدء محادثة خاصة مع مستخدم
+  const startPrivateChat = async (otherUserId: number) => {
+    try {
+      // استخدام وظيفة apiRequest لإرسال الطلب مع إرفاق رمز المصادقة تلقائيا
+      const res = await apiRequest(
+        'POST',
+        '/api/chat/private/create',
+        { otherUserId }
+      );
+      
+      if (res.ok) {
+        // الانتقال إلى صفحة المحادثات الخاصة
+        window.location.href = '/private-chat';
+      }
+    } catch (error: any) {
+      console.error('خطأ في بدء المحادثة الخاصة:', error);
+      toast({
+        title: "خطأ",
+        description: error.message || "فشل في بدء المحادثة الخاصة",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full max-w-7xl mx-auto mt-8 p-2">
+      {/* قائمة المستخدمين المتاحين */}
+      <Card className="md:col-span-1 h-fit">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg">المستخدمين</CardTitle>
+            <User className="h-5 w-5 text-primary" />
+          </div>
+          <CardDescription>
+            ابدأ محادثة خاصة مع أحد المستخدمين
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent className="max-h-[500px] overflow-y-auto py-0">
+          {isLoadingUsers ? (
+            <div className="space-y-3 py-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <div className="space-y-1 flex-1">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : availableUsers && availableUsers.length > 0 ? (
+            <div className="space-y-1 py-2">
+              {availableUsers.map((otherUser: any) => (
+                <div 
+                  key={otherUser.id} 
+                  className="p-2 rounded-lg hover:bg-muted flex items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <Avatar className="h-9 w-9 border">
+                      <AvatarFallback>{otherUser.fullName.charAt(0)}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <div className="font-medium text-sm flex items-center gap-1">
+                        {otherUser.fullName}
+                        {otherUser.verified && (
+                          <Badge variant="outline" className="h-4 px-1 text-[10px] bg-blue-50 text-blue-700">موثق</Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {otherUser.type === 'agent' ? 'وكيل' : 'مستخدم'}
+                      </div>
+                    </div>
+                  </div>
+                  <Button 
+                    size="sm" 
+                    variant="ghost"
+                    className="h-8 px-2"
+                    onClick={() => startPrivateChat(otherUser.id)}
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-8 text-center text-muted-foreground">
+              <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-20" />
+              <p>لا يوجد مستخدمين متاحين</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      
+      {/* غرفة المحادثة العامة */}
+      <Card className="md:col-span-3">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="h-6 w-6" />
+              <CardTitle>{room?.name || 'الدردشة العامة'}</CardTitle>
+            </div>
+            <Badge variant="outline" className="px-3 py-1">{messages.length} رسالة</Badge>
+          </div>
+          <CardDescription>
+            {room?.description || 'غرفة محادثة عامة لجميع المستخدمين'}
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent>
+          <div className="h-[500px] overflow-y-auto p-4 border rounded-md bg-muted/20">
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                <MessageSquare className="h-12 w-12 mb-2 opacity-20" />
+                <p>لا توجد رسائل بعد. كن أول من يبدأ المحادثة!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map((message, index) => (
+                  <div 
+                    key={message.id || index} 
+                    className={`flex gap-2 ${message.senderId === user.id ? 'flex-row-reverse' : 'flex-row'}`}
+                  >
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback>
+                        <User className="h-4 w-4" />
+                      </AvatarFallback>
+                    </Avatar>
+                    
+                    <div 
+                      className={`max-w-[80%] rounded-lg p-3 ${
+                        message.senderId === user.id 
+                          ? 'bg-primary text-primary-foreground' 
+                          : 'bg-muted'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-bold">
+                          {message.senderId === user.id ? 'أنت' : message.senderName}
+                        </span>
+                        <span className="text-xs opacity-70">
+                          {formatTime(message.createdAt)}
+                        </span>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                    </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+        </CardContent>
+        
+        <CardFooter className="flex-col">
+          {/* عرض المستخدمين الذين يكتبون حاليا */}
+          {usersTyping.length > 0 && (
+            <div className="w-full mb-2">
+              <div className="text-sm text-primary px-2 py-1 rounded-md text-right font-medium bg-muted">
+                <span className="animate-pulse inline-block">⌨️</span> {usersTyping.join(", ")} {usersTyping.length === 1 ? "يكتب الآن..." : "يكتبون الآن..."}
+              </div>
+            </div>
+          )}
+          
+          <form onSubmit={handleSendMessage} className="w-full flex gap-2 relative">
+            <div className="relative flex-1">
+              <Input
+                type="text"
+                placeholder="اكتب رسالتك..."
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                className="pl-10 text-right"
+              />
+              <Button 
+                type="button" 
+                variant="ghost" 
+                size="icon" 
+                className="absolute left-1 top-1/2 transform -translate-y-1/2"
+                onClick={() => setShowEmoji(!showEmoji)}
+              >
+                <Smile className="h-5 w-5 text-muted-foreground" />
+              </Button>
+            </div>
+            <Button type="submit" disabled={!inputMessage.trim()}>
+              <Send className="h-4 w-4 ml-2" />
+              إرسال
+            </Button>
+          </form>
+          
+          {/* منتقي الرموز التعبيرية */}
+          {showEmoji && (
+            <div 
+              className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[9999] bg-white rounded-md shadow-lg border-2 border-primary"
+              style={{ maxWidth: '95vw', maxHeight: '90vh' }}
+            >
+              <div className="flex justify-between items-center p-2 border-b bg-muted">
+                <h3 className="font-semibold text-primary">اختر رمزًا تعبيريًا</h3>
+                <button 
+                  className="p-1 hover:bg-gray-200 rounded-full" 
+                  onClick={() => setShowEmoji(false)}
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ padding: '8px' }}>
+                <EmojiPicker
+                  theme={Theme.LIGHT}
+                  onEmojiClick={(emojiData: EmojiClickData) => {
+                    console.log("تم اختيار الإيموجي:", emojiData);
+                    setInputMessage(prev => prev + emojiData.emoji);
+                    setShowEmoji(false);
+                  }}
+                  lazyLoadEmojis={true}
+                  searchPlaceHolder="ابحث عن رمز تعبيري..."
+                  width={300}
+                  height={400}
+                  previewConfig={{ showPreview: false }}
+                />
+              </div>
+            </div>
+          )}
+        </CardFooter>
+      </Card>
+    </div>
+  );
+}

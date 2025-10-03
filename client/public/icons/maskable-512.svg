@@ -1,0 +1,24 @@
+
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- خلفية ذهبية -->
+  <rect width="512" height="512" fill="#FFD700" rx="64"/>
+  
+  <!-- دائرة بيضاء في الوسط -->
+  <circle cx="256" cy="256" r="128" fill="white"/>
+  
+  <!-- رمز الدولار -->
+  <text x="256" y="296.96" 
+        font-family="Arial, sans-serif" 
+        font-size="76.8" 
+        font-weight="bold" 
+        text-anchor="middle" 
+        fill="#B8860B">$</text>
+  
+  <!-- نص عربي -->
+  <text x="256" y="435.2" 
+        font-family="Arial, sans-serif" 
+        font-size="40.96" 
+        font-weight="bold" 
+        text-anchor="middle" 
+        fill="white">صرافة</text>
+</svg>

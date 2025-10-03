@@ -1,0 +1,45 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "email": "ss73ss73ss73@gmail.com",
+      "password": "$2b$10$YourHashedPasswordHere",
+      "role": "admin",
+      "account_number": "ACC001",
+      "name": "المطور الرئيسي",
+      "status": "active",
+      "verification_status": "verified"
+    },
+    {
+      "id": 2,
+      "email": "s1@s1.com",
+      "password": "$2b$10$YourHashedPasswordHere",
+      "role": "user",
+      "account_number": "ACC002",
+      "name": "مستخدم تجريبي",
+      "status": "active",
+      "verification_status": "verified"
+    },
+    {
+      "id": 3,
+      "email": "s2@s2.com",
+      "password": "$2b$10$YourHashedPasswordHere", 
+      "role": "user",
+      "account_number": "ACC003",
+      "name": "مستخدم تجريبي 2",
+      "status": "active",
+      "verification_status": "verified"
+    },
+    {
+      "id": 4,
+      "email": "s3@s3.com",
+      "password": "$2b$10$YourHashedPasswordHere",
+      "role": "user", 
+      "account_number": "ACC004",
+      "name": "مستخدم تجريبي 3",
+      "status": "active",
+      "verification_status": "verified"
+    }
+  ],
+  "access_restrictions": []
+}
