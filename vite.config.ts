@@ -6,8 +6,8 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 // config async لأننا نستخدم await import
 export default defineConfig(async () => ({
   // مهم لـ GitHub Pages (استبدل sirafaa باسم المستودع)
-  base: "/sirafaa/",
-
+  base: "/sirafa/", 
+ build: { outDir: "dist/public", emptyOutDir: true },
   plugins: [
     react(),
     runtimeErrorOverlay(),
