@@ -1,6 +1,6 @@
 import { Switch, Route, useLocation } from "wouter";
 import { useEffect } from "react";
-
+import { Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -102,7 +102,7 @@ function Routes() {
       <Route path="/" component={HomePage} />
       <Route path="/auth" component={AuthInlinePage} />
       <Route path="/auth-old" component={AuthPage} />
-
+      <Route path="/__ping" component={() => <div style={{padding:24}}>OK</div>} />
       {/* محمية */}
       <ProtectedRoute path="/dashboard" component={DashboardPage} />
       <ProtectedRoute path="/balance" component={BalancePage} />
