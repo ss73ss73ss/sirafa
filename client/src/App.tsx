@@ -1,4 +1,6 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
+import { useEffect } from "react";
+
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -84,15 +86,26 @@ import { ProtectedRoute } from "@/lib/protected-route";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AppChrome } from "@/components/mobile/AppChrome";
 
-function Router() {
+// Redirect صغير مبني على wouter (يحترم الـ base)
+function Redirect({ to }: { to: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation(to);
+  }, [to, setLocation]);
+  return null;
+}
+
+function Routes() {
   return (
     <Switch>
+      {/* عامة */}
       <Route path="/" component={HomePage} />
       <Route path="/auth" component={AuthInlinePage} />
       <Route path="/auth-old" component={AuthPage} />
+
+      {/* محمية */}
       <ProtectedRoute path="/dashboard" component={DashboardPage} />
       <ProtectedRoute path="/balance" component={BalancePage} />
-
       <ProtectedRoute path="/transfers" component={TransfersPage} />
       <ProtectedRoute path="/internal-transfer" component={InternalTransferPage} />
       <ProtectedRoute path="/statement" component={StatementPage} />
@@ -102,8 +115,14 @@ function Router() {
       <ProtectedRoute path="/private-chat" component={PrivateChatPage} />
       <ProtectedRoute path="/group-chats" component={GroupChatsPage} />
       <ProtectedRoute path="/group-chats/:groupId" component={GroupChatPage} />
-      <ProtectedRoute path="/market/direct" component={() => { window.location.href = '/market'; return null; }} />
+
+      {/* إعادة توجيه تتبع الـ base (بدون window.location) */}
+      <ProtectedRoute
+        path="/market/direct"
+        component={() => <Redirect to="/market" />}
+      />
       <ProtectedRoute path="/market" component={MarketPage} />
+
       <ProtectedRoute path="/upgrade-request" component={UpgradeRequestPage} />
       <ProtectedRoute path="/external-transfer-request" component={ExternalTransferRequestPage} />
       <ProtectedRoute path="/verify-account" component={VerifyAccountPage} />
@@ -126,17 +145,19 @@ function Router() {
       <ProtectedRoute path="/admin-users" component={AdminUsersPage} />
       <ProtectedRoute path="/admin/users" component={AdminUsersPage} />
       <ProtectedRoute path="/admin-notifications" component={AdminNotificationsPage} />
-      {/* الصفحة الجديدة الموحدة لإدارة المكاتب */}
+
+      {/* مكتب موحّد + تحويل مسارات قديمة */}
       <ProtectedRoute path="/office-management" component={OfficeManagementPage} />
-      
-      {/* مسار صفحة إعدادات العمولة المنفصلة */}
+      <ProtectedRoute
+        path="/inter-office-transfer"
+        component={() => <Redirect to="/office-management" />}
+      />
+      <ProtectedRoute
+        path="/inter-office-commissions"
+        component={() => <Redirect to="/office-management" />}
+      />
+
       <ProtectedRoute path="/agent/commission-settings" component={CommissionSettingsPage} />
-      
-      {/* إعادة توجيه الصفحات القديمة إلى الصفحة الموحدة */}
-      <ProtectedRoute path="/inter-office-transfer" component={() => { window.location.href = '/office-management'; return null; }} />
-      <ProtectedRoute path="/inter-office-commissions" component={() => { window.location.href = '/office-management'; return null; }} />
-      
-      {/* باقي الصفحات */}
       <ProtectedRoute path="/agent-commission-settings" component={AgentCommissionSettingsPage} />
       <ProtectedRoute path="/commission-settings" component={CommissionSettingsPage} />
       <ProtectedRoute path="/commission-pool" component={CommissionPoolPage} />
@@ -151,8 +172,11 @@ function Router() {
       <ProtectedRoute path="/admin/internal-transfer-logs" component={AdminInternalTransferLogsPage} />
       <ProtectedRoute path="/receipts-management" component={ReceiptsManagementPage} />
       <ProtectedRoute path="/security-admin" component={SecurityAdminPage} />
+
+      {/* عامة للأمان/الديمو */}
       <Route path="/security-test" component={SecurityTestPage} />
       <Route path="/security-demo" component={SecurityDemoPage} />
+
       <ProtectedRoute path="/inter-office-receive" component={InterOfficeReceivePage} />
       <ProtectedRoute path="/transfers/inter-office" component={InterOfficeReceivePage} />
 
@@ -178,7 +202,9 @@ function Router() {
       <ProtectedRoute path="/international-transfer-receive" component={InternationalTransferReceivePage} />
       <ProtectedRoute path="/voice-test" component={VoiceTestPage} />
       <ProtectedRoute path="/admin/message-monitoring" component={AdminMessageMonitoringPage} />
-      <Route component={NotFound} />
+
+      {/* Catch-all لأي مسار مش معرّف */}
+      <Route path="/:rest*" component={NotFound} />
     </Switch>
   );
 }
@@ -195,7 +221,7 @@ function App() {
                   <Toaster />
                   <InstallPrompt />
                   <AppChrome>
-                    <Router />
+                    <Routes />
                   </AppChrome>
                 </TooltipProvider>
               </PushNotificationsProvider>
