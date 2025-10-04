@@ -1,43 +1,47 @@
 import { createRoot } from "react-dom/client";
+import { Router } from "wouter";
 import App from "./App";
 import "./index.css";
 
-// Set the document direction for RTL support
+// RTL
 document.documentElement.dir = "rtl";
 document.documentElement.lang = "ar";
 
-// Service Worker Management
-if ('serviceWorker' in navigator) {
+// ===== Service Worker (جيت هب بيجز) =====
+// استخدم مسارات نسبية حتى تشتغل تحت /sirafa/
+if ("serviceWorker" in navigator) {
   if (import.meta.env.DEV) {
-    // في التطوير: تسجيل kill-switch SW لمسح SW القديم
+    // خلال التطوير: إزالة أي SW قديم
     (async () => {
       try {
-        console.log('🔥 PWA: Registering kill-switch SW...');
-        await navigator.serviceWorker.register('/sw-kill.js', { scope: '/' });
-        
-        // انتظار قليل ثم مسح registrations
+        console.log("🔥 PWA: registering dev kill-switch SW…");
+        await navigator.serviceWorker.register("sw-kill.js", { scope: "./" });
+
         setTimeout(async () => {
-          const registrations = await navigator.serviceWorker.getRegistrations();
-          registrations.forEach(r => r.unregister());
-          
-          if ('caches' in window) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+          if ("caches" in window) {
             const keys = await caches.keys();
-            keys.forEach(k => caches.delete(k));
+            await Promise.all(keys.map((k) => caches.delete(k)));
           }
-          
-          console.log('🔧 PWA: Development cleanup complete');
-        }, 1000);
-        
-      } catch (error) {
-        console.error('🔥 PWA: Kill-switch failed:', error);
+          console.log("🔧 PWA: dev cleanup done");
+        }, 800);
+      } catch (e) {
+        console.error("🔥 PWA: kill-switch failed:", e);
       }
     })();
   } else {
-    // في Production: تسجيل SW عادي
-    navigator.serviceWorker.register('/sw.js')
-      .then(() => console.log('✅ PWA: Service Worker registered'))
-      .catch(error => console.error('❌ PWA: SW registration failed:', error));
+    // في الإنتاج على GitHub Pages
+    navigator.serviceWorker
+      .register("sw.js", { scope: "./" })
+      .then(() => console.log("✅ PWA: SW registered"))
+      .catch((e) => console.error("❌ PWA: SW registration failed:", e));
   }
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+// ===== Mount with wouter base =====
+createRoot(document.getElementById("root")!).render(
+  <Router base="/sirafa">
+    <App />
+  </Router>
+);
