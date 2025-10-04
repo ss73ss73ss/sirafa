@@ -205,6 +205,7 @@ function Routes() {
 
       {/* Catch-all لأي مسار مش معرّف */}
       <Route path="/:rest*" component={NotFound} />
+
     </Switch>
   );
 }
@@ -230,6 +231,7 @@ function App() {
         </SecurityGate>
       </QueryClientProvider>
     </ThemeProvider>
+
   );
 }
 
