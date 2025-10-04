@@ -205,7 +205,7 @@ function Routes() {
 
       {/* Catch-all لأي مسار مش معرّف */}
       <Route path="/:rest*" component={NotFound} />
-
+      <Route path="/__ping" component={() => <div style={{padding:24}}>OK</div>} />
     </Switch>
   );
 }
