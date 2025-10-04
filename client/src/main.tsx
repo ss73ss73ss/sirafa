@@ -3,11 +3,10 @@ import { Router } from "wouter";
 import App from "./App";
 import "./index.css";
 
-// RTL
 document.documentElement.dir = "rtl";
 document.documentElement.lang = "ar";
 
-// Service Worker (مسارات نسبية حتى تعمل تحت /sirafa/)
+// Service Worker بمسارات نسبية
 if ("serviceWorker" in navigator) {
   if (import.meta.env.DEV) {
     (async () => {
@@ -28,7 +27,7 @@ if ("serviceWorker" in navigator) {
   }
 }
 
-// 👈 أهم شيء: Router بقاعدة /sirafa
+// 👇 أهم سطر: base يساوي اسم الريبو
 createRoot(document.getElementById("root")!).render(
   <Router base="/sirafa">
     <App />
